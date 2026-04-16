@@ -6,15 +6,105 @@ title: "Pack And Registry CLI Surface"
 |---|---|
 | Status | Proposed |
 | Date | 2026-04-16 |
-| Author(s) | Nora, Noreen |
+| Author(s) | Donna Box, Ag Nora, Ag Noreen |
 | Issue | — |
 | Supersedes | earlier `gc pack`-only and `pack`/`store` explorations |
 
-Design document for the user-facing `gc pack` and `gc registry` surface.
+This document builds on the **PackV2** work from the 15.0 release and makes no change to the semantics of package format or loading semantics. 
+
+It does however do two things:
+1. Introduce the notion of a *registry* where Gas City packs can be published and discovered.
+2. Propose a coherent CLI interface across all package operations (discovery, import, upgrade, et al) 
+
+## Registries
+A Gas City registry is simply a `registry.toml` file that is typically fetched over HTTP.
+
+A `registry.toml` file is simply a list of packages with a name, version info, description, and the URL of the source.  Registries don't store packs, they simply are an directory of packs. Once the source URL is read from registry.toml, the registry is out of the loop.
+
+A minimal `registry.toml` should have at least a couple of entries so search and
+catalog behavior are concrete:
+
+```toml
+schema = 1
+
+[[pack]]
+name = "maintenance"
+description = "Health checks and baseline operational tooling."
+source = "https://github.com/gastownhall/maintenance"
+
+  [[pack.release]]
+  version = "1.2.0"
+  commit = "abc123"
+  hash = "sha256:..."
+  description = "Adds doctor checks and improves stale-db handling."
+
+[[pack]]
+name = "observatory"
+description = "Metrics and telemetry helpers."
+source = "https://github.com/gastownhall/observatory"
+
+  [[pack.release]]
+  version = "0.4.0"
+  commit = "def456"
+  hash = "sha256:..."
+  description = "First public release."
+```
+
+A registry can advertise multiple versions of the same pack, with distinct notes on each version:
+
+```toml
+[[pack]]
+name = "maintenance"
+description = "Health checks and baseline operational tooling."
+source = "https://github.com/gastownhall/maintenance"
+
+  [[pack.release]]
+  version = "1.2.0"
+  commit = "abc123"
+  hash = "sha256:..."
+  description = "Adds doctor checks and improves stale-db handling."
+
+  [[pack.release]]
+  version = "1.1.0"
+  commit = "def456"
+  hash = "sha256:..."
+  description = "Stabilizes patrol behavior and stale-db handling."
+```
+
+To faciliate east dicovery,  Gas City implementation maintains a list of registries that are consulted when searching for or enumerating available packs. That list of registries is a system managed file ()`~/.gc/registries.toml`) and has the standard `add`/`list`/`remove` operations. A fresh Gas City installation will have one entry in `registries.toml` pointing to the Gac City-managed registry:
+
+```toml
+schema = 1
+
+[[registry]]
+name = "main"
+source = "https://github.com/gastownhall/gascity-packs"
+```
+
+
+
+
+
 
 ## Command Trees
 
-These are the working command trees reviewers should look at first.
+The operations one wants to do wrt managing imports from one package to another have *some* overlap with the operations wants to do on a registry. To that end,  this design relies on two command trees:
+* `gc pack` which is focused exclusively on managign package-to-package import graphs
+* `gc registry` which is focused on discovery of pacakages based on name, description or version. 
+
+The two work in tandem: the result of a registry search is a qualified name that can be passed directly to the add command that creates the import.
+
+Note that `gc pack` subsumes the functionality of `gc pack` and `gc import` in the 0.15.0 release.
+
+### `gc registry`
+
+```text
+gc registry list
+gc registry add <registry-name> <source>
+gc registry remove <registry-name>
+gc registry search [query] [--registry <name>]
+gc registry show <qualified-pack-name>
+```
 
 ### `gc pack`
 
@@ -26,16 +116,6 @@ gc pack show <import-name> [--pack <path>] [--rig <name-or-path>]
 gc pack fetch [<import-name>] [--pack <path>] [--rig <name-or-path>]
 gc pack outdated [<import-name>] [--pack <path>] [--rig <name-or-path>]
 gc pack upgrade [<import-name>] [--pack <path>] [--rig <name-or-path>]
-```
-
-### `gc registry`
-
-```text
-gc registry list
-gc registry add <registry-name> <source>
-gc registry remove <registry-name>
-gc registry search [query] [--registry <name>]
-gc registry show <qualified-pack-name>
 ```
 
 ## Current Proposal
@@ -117,8 +197,6 @@ gc pack list [--transitive] [--pack <path>] [--rig <name-or-path>]
 
 - with no flags, lists direct imports in scope
 - with `--transitive`, lists the full resolved transitive set
-- `--transitive` is the POR simplification in place of an initial separate
-  `deps` verb
 
 #### `gc pack show`
 
@@ -327,11 +405,6 @@ source = "https://github.com/gastownhall/maintenance"
   description = "Adds doctor checks and improves stale-db handling."
 ```
 
-### Provenance note
-
-This registry model comes from earlier design work that was paused while
-PackV2 moved forward. It should be treated as a well thought out and cohesive
-design for machine-known registry configuration and catalog shape.
 
 ## Cache And Materialization
 
@@ -356,11 +429,19 @@ If materialization happens:
 - it is a runtime concern rather than the primary pack CLI story
 - rig behavior is still explicit through `--rig`
 
-## Deferred Questions
+## Parked Questions
 
-The following are intentionally deferred:
+These are intentionally parked to the side for now. The current design pass is
+primarily trying to settle command names, signatures, and output shapes.
 
-- exact reverse-dependency or blocker-reporting flags beyond `list --transitive`
-- whether pack output should later surface more explicit reason/provenance data
-- whether a future richer registry admin surface needs extra flags or status metadata
-- whether any materialized subset of `.gc` should later become explicitly persistent/shareable
+1. This design has two top-level command trees corresponding to the two nouns
+   in play (packages and registries). If desired, we could embed the registry
+   commands under pack, but it's unclear whether creating a secondary/scoped
+   noun is better than having two peer nouns.
+2. The current design relies on implicit caching of a lowered or processed form
+   of a package, all stored under `.gc`. We lack an explicit mechanism for
+   embedding any form of the imported packages into package content (a.k.a.
+   vendoring), making the transitive closure of imported packages into a single
+   deployable unit. Our import mechanism supports the scenario by embedding
+   pack content under `assets/` and using path references in the `import`
+   directive in `pack.toml`.
