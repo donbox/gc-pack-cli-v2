@@ -21,8 +21,7 @@ A Gas City registry is simply a `registry.toml` file that is typically fetched o
 
 A `registry.toml` file is simply a list of packages with a name, version info, description, and the URL of the source.  Registries don't store packs, they simply are an directory of packs. Once the source URL is read from registry.toml, the registry is out of the loop.
 
-A minimal `registry.toml` should have at least a couple of entries so search and
-catalog behavior are concrete:
+The registry entry for a pack lists one or more versioned releases of the pack. Here is an example `registry.toml` file.
 
 ```toml
 schema = 1
@@ -109,7 +108,7 @@ gc registry show <qualified-pack-name>
 ### `gc pack`
 
 ```text
-gc pack add <source-or-name> [--name <import-name>] [--pack <path>] [--rig <name-or-path>]
+gc pack add <source-or-name> [--name <import-name>] [--version <constraint>] [--pack <path>] [--rig <name-or-path>]
 gc pack remove <import-name> [--pack <path>] [--rig <name-or-path>]
 gc pack list [--transitive] [--pack <path>] [--rig <name-or-path>]
 gc pack show <import-name> [--pack <path>] [--rig <name-or-path>]
@@ -167,7 +166,7 @@ Working rules:
 #### `gc pack add`
 
 ```text
-gc pack add <source-or-name> [--name <import-name>] [--pack <path>] [--rig <name-or-path>]
+gc pack add <source-or-name> [--name <import-name>] [--version <constraint>] [--pack <path>] [--rig <name-or-path>]
 ```
 
 - adds an import to the selected scope
@@ -178,6 +177,10 @@ gc pack add <source-or-name> [--name <import-name>] [--pack <path>] [--rig <name
   - direct source URLs
   - local paths
 - `--name` gives an explicit local import name when needed
+- `--version` records a version constraint in the import when the add is
+  registry-backed
+- if `--version` is omitted, registry-backed adds follow the registry's default
+  resolution behavior
 
 #### `gc pack remove`
 
@@ -237,6 +240,7 @@ gc pack outdated [<import-name>] [--pack <path>] [--rig <name-or-path>]
 - does not mutate imports or cache
 - with no target, reports all outdated imports in scope
 - with a target, reports one imported pack
+- respects version constraints already recorded on imports
 
 #### `gc pack upgrade`
 
@@ -248,6 +252,7 @@ gc pack upgrade [<import-name>] [--pack <path>] [--rig <name-or-path>]
 - with a target, upgrades one imported pack
 - is transitive as needed for coherent re-resolution
 - fetches the new resolved result into cache
+- respects version constraints already recorded on imports
 
 ## `gc registry`
 
