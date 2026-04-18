@@ -16,16 +16,16 @@ It does however do two things:
 1. Introduce the notion of a *registry* where Gas City packs can be published and discovered.
 2. Propose a coherent CLI interface across all package operations (discovery, import, upgrade, et al.)
 
-The `gc pack` CLI is functionally the same as `gc import`. The primary difference is more precise targeting of which entity's imports are being impacted (in-scope pack vs. city pack vs. targeted rig). A secondary difference is that `add` accepts the result of a registry lookup, so you can add an import without ever typing a `/`.
+The proposed `gc pack` CLI is functionally the same as `gc import`. The primary difference is more precise targeting of which entity's imports are being impacted (in-scope pack vs. city pack vs. targeted rig). A secondary difference is that `add` accepts the result of a registry lookup, so you can add an import without ever typing a `/`.
 
-This proposal would also subsume the current two `gc pack` commands to land on a single coherent surface area.
+This proposal would also subsume the two legacy `gc pack` commands to land on a single coherent surface area.
 
-All of this said, the main new concept in this proposal is a registry.
+All of this said, the main new concept in this proposal is a registry, so let's begin there.
 
 ## Registries
 A Gas City registry is simply a `registry.toml` file that is typically fetched over HTTP.
 
-A `registry.toml` file is simply a list of packages with a name, version info, description, and the URL of the source. Registries do not store packs; they are an index of packs. Once the source URL is read from `registry.toml`, the registry is out of the loop.
+A `registry.toml` file is a list of packages with a name, version info, description, and the URL of the source. Registries do not store packs; they are an index of packs. Once the source URL is read from `registry.toml`, the registry is out of the loop.
 
 The registry entry for a pack lists one or more versioned releases of the pack. Here is an example `registry.toml` file.
 
@@ -77,7 +77,7 @@ source = "https://packages.example/main/lighthouse"
   description = "Stabilizes patrol behavior and wakeup handling."
 ```
 
-To facilitate discovery, Gas City maintains a list of registries that are consulted when searching for or enumerating available packs. That list is a system-managed file, `~/.gc/registries.toml`, and has the standard `add` / `list` / `remove` operations. A fresh Gas City installation would normally include a `main` entry pointing at the Gas City-managed registry. A fuller example with two configured registries looks like this:
+To facilitate discovery, a Gas City installation maintains a list of registries that are consulted when searching for or enumerating available packs. That list is a system-managed file, `~/.gc/registries.toml`, and has the standard `add` / `list` / `remove` CLI operations. A fresh Gas City installation would normally include a `main` entry pointing at the Gas City-managed registry. A fuller example with two configured registries looks like this:
 
 ```toml
 schema = 1
@@ -94,7 +94,7 @@ source = "https://github.com/acme/gascity-packs"
 The `registries.toml` file can point to multiple registries. Each configured registry name must be unique locally; those local names are what disambiguate packs when two or more registries publish the same pack name.
 
 
-## Command Trees
+## CLI Command Trees
 
 The operations one wants to do when managing imports from one package to another have *some* overlap with the operations one wants to do on a registry; however, there are enough differences to warrant two command trees:
 * `gc pack` which is focused exclusively on managing package-to-package import graphs
@@ -104,7 +104,7 @@ The two work in tandem: the result of a registry search is a qualified name that
 
 This design is silent with respect to *where* packages are stored:
 - Registries are index only
-- Caches are largely opaque and contain fetched content only based on `[import]` directives.
+- Caches are largely opaque and contain fetched content only based on a pack's `[import]` declarations.
 
 
 ### `gc registry`
@@ -149,7 +149,10 @@ Working rules:
 - if the current directory is in neither a pack directory nor a rigged
   directory, there is no ambient pack and the user must pass `--pack` or
   `--rig`
-- `--pack <path>` targets another pack explicitly
+
+  
+  There are two command arguments to most `gc pack commands`
+- `--pack <path>` explicitly targets the pack the import will be added to 
 - `--rig <name-or-path>` opts into rig-scoped import behavior within the city
   associated with the ambient or explicitly targeted pack
 - rig-scoped imports only happen when `--rig` is explicitly passed
