@@ -16,14 +16,21 @@ It does however do two things:
 1. Introduce the notion of a *registry* where Gas City packs can be published and discovered.
 2. Propose a coherent CLI interface across all package operations (discovery, import, upgrade, et al.)
 
-The proposed `gc pack` CLI is functionally the same as `gc import`. The primary difference is more precise targeting of which entity's imports are being impacted (in-scope pack vs. city pack vs. targeted rig). A secondary difference is that `add` accepts the result of a registry lookup, so you can add an import without ever typing a `/`.
+The proposed `gc pack` CLI rationalizes the import-facing surface introduced as
+`gc import` in 0.15.0. The primary difference is more precise targeting of
+which entity's imports are being impacted (in-scope pack vs. city pack vs.
+targeted rig). A secondary difference is that `add` accepts the result of a
+registry lookup, so you can add an import without having to paste a full URL or
+path.
 
-This proposal would also subsume the two legacy `gc pack` commands to land on a single coherent surface area.
+This proposal would also subsume the two legacy `gc pack` commands, `fetch` and
+`list`, to land on a single coherent surface area.
 
 All of this said, the main new concept in this proposal is a registry, so let's begin there.
 
 ## Registries
-A Gas City registry is simply a `registry.toml` file that is typically fetched over HTTP.
+A Gas City registry is simply a `registry.toml` file that is typically fetched
+over HTTP.
 
 A `registry.toml` file is a list of packages with a name, version info, description, and the URL of the source. Registries do not store packs; they are an index of packs. Once the source URL is read from `registry.toml`, the registry is out of the loop.
 
@@ -77,21 +84,31 @@ source = "https://packages.example/main/lighthouse"
   description = "Stabilizes patrol behavior and wakeup handling."
 ```
 
-To facilitate discovery, a Gas City installation maintains a list of registries that are consulted when searching for or enumerating available packs. That list is a system-managed file, `~/.gc/registries.toml`, and has the standard `add` / `list` / `remove` CLI operations. A fresh Gas City installation would normally include a `main` entry pointing at the Gas City-managed registry. A fuller example with two configured registries looks like this:
+To facilitate discovery, a Gas City installation maintains a list of registries that are consulted when searching for or enumerating available packs. That list is a system-managed file, `~/.gc/registries.toml`, and has the standard `add` / `list` / `remove` CLI operations. A fresh Gas City installation would normally include a `main` entry pointing at the Gas City-managed registry. The examples below use plain catalog URLs rather than repository URLs so the fetch semantics stay clear. A fuller example with two configured registries looks like this:
 
 ```toml
 schema = 1
 
 [[registry]]
 name = "main"
-source = "https://github.com/gastownhall/gascity-packs"
+source = "https://registries.gascity.example/main/registry.toml"
 
 [[registry]]
 name = "acme"
-source = "https://github.com/acme/gascity-packs"
+source = "https://registries.acme.example/catalog/registry.toml"
 ```
 
 The `registries.toml` file can point to multiple registries. Each configured registry name must be unique locally; those local names are what disambiguate packs when two or more registries publish the same pack name.
+
+For this proposal, a registry `source` is a locator for the registry catalog,
+not a git-specific concept. A source may be:
+
+- a direct HTTP(S) URL to `registry.toml`
+- an HTTP(S) base URL where `registry.toml` is implied
+- a local filesystem path to `registry.toml`
+- a local directory containing `registry.toml`
+
+This proposal does not otherwise tie registries to GitHub or git semantics.
 
 
 ## CLI Command Trees
@@ -105,6 +122,8 @@ The two work in tandem: the result of a registry search is a qualified name that
 This design is silent with respect to *where* packages are stored:
 - Registries are index only
 - Caches are largely opaque and contain fetched content only based on a pack's `[import]` declarations.
+- `gc pack show` inspects local imports; `gc registry show` inspects exact
+  catalog entries
 
 
 ### `gc registry`
@@ -151,13 +170,17 @@ Working rules:
   `--rig`
 
   
-  There are two command arguments to most `gc pack commands`
-- `--pack <path>` explicitly targets the pack the import will be added to 
+The two scope-shaping flags on most `gc pack` commands are:
+
+- `--pack <path>` explicitly targets the pack the import will be added to
 - `--rig <name-or-path>` opts into rig-scoped import behavior within the city
   associated with the ambient or explicitly targeted pack
 - rig-scoped imports only happen when `--rig` is explicitly passed
 - `--rig` never creates an ambient rig scope on its own; it is always an
   explicit refinement
+
+When both `--pack` and `--rig` are passed, `--rig` is resolved relative to the
+city associated with `--pack`.
 
 ### Verb set
 
@@ -186,9 +209,22 @@ gc pack add <source-or-name> [--name <import-name>] [--version <constraint>] [--
   - unqualified registry names when resolution is unambiguous
   - direct source URLs
   - local paths
+- input is interpreted in this order:
+  - contains `:` and is not a URL scheme: qualified registry name
+  - has a URL scheme: direct source URL
+  - resolves on disk: local path
+  - otherwise: unqualified registry name
 - `--name` gives an explicit local import name when needed
+- without `--name`, registry-backed adds use the pack name and URL/path adds
+  use the final path segment
+- if the derived name collides with an unrelated existing import, `add` fails
+  and asks the user to pass `--name`
+- re-adding the same import name is allowed; it updates that import rather than
+  forcing the user through a separate edit command
 - `--version` records a version constraint in the import when the add is
   registry-backed
+- `--version` is also allowed for URL and local-path adds; it is still
+  recorded in the import
 - if `--version` is omitted, registry-backed adds follow the registry's default
   resolution behavior
 - this proposal does not freeze the resolver's default selection policy; it
@@ -207,7 +243,8 @@ gc pack remove <import-name> [--pack <path>] [--rig <name-or-path>]
 
 - removes an import from the selected scope
 - does not imply eager cache deletion
-- remains strict about inbound reference blockers
+- remains strict about inbound reference blockers, meaning other local config
+  still depends on that import and would be left invalid by removing it
 
 #### `gc pack list`
 
@@ -217,6 +254,14 @@ gc pack list [--transitive] [--pack <path>] [--rig <name-or-path>]
 
 - with no flags, lists direct imports in scope
 - with `--transitive`, lists the full resolved transitive set
+
+Expected output:
+
+```text
+Name         Version  Source
+lighthouse   ^1.2     main:lighthouse
+weatherglass 0.4      ../packs/weatherglass
+```
 
 #### `gc pack show`
 
@@ -235,6 +280,17 @@ Expected output shape:
 - resolved version or release
 - fetched status
 - scope
+
+Expected output:
+
+```text
+Import:         lighthouse
+Source:         https://packages.example/main/lighthouse
+Version:        ^1.2
+Resolved:       1.2.0
+Fetched:        yes
+Scope:          ambient pack
+```
 
 #### `gc pack fetch`
 
@@ -259,6 +315,13 @@ gc pack outdated [<import-name>] [--pack <path>] [--rig <name-or-path>]
 - with a target, reports one imported pack
 - respects version constraints already recorded on imports
 
+Expected output:
+
+```text
+Name         Current  Latest allowed  Latest available  Status
+lighthouse   1.1.0    1.2.0           2.0.1             upgrade available
+```
+
 #### `gc pack upgrade`
 
 ```text
@@ -270,6 +333,18 @@ gc pack upgrade [<import-name>] [--pack <path>] [--rig <name-or-path>]
 - is transitive as needed for coherent re-resolution
 - fetches the new resolved result into cache
 - respects version constraints already recorded on imports
+
+### Network and offline behavior
+
+- `gc pack outdated` should succeed against the locally available import state
+  and cached metadata
+- `gc pack upgrade` may fail if the needed pack content is not already cached
+  and cannot be fetched
+- `gc pack fetch` may fall back to cached content when the source is
+  unreachable, but it should warn that network refresh failed
+- registry-backed operations depend on registry reachability or cached catalog
+  data; the exact caching policy for `registry.toml` itself remains a parked
+  question
 
 ## `gc registry`
 
@@ -300,8 +375,8 @@ Expected output:
 
 ```text
 Name   Source
-main   https://github.com/gastownhall/gascity-packs
-acme   https://github.com/acme/gascity-packs
+main   https://registries.gascity.example/main/registry.toml
+acme   https://registries.acme.example/catalog/registry.toml
 ```
 
 #### `gc registry add`
@@ -336,6 +411,7 @@ gc registry search [query] [--registry <name>]
 - searches across all configured registries by default
 - `--registry <name>` narrows the search to one registry
 - returns multiple results
+- pagination and limiting are intentionally out of scope for this proposal
 
 Expected output:
 
@@ -354,6 +430,8 @@ gc registry show <qualified-pack-name>
 - exact-address lookup for one pack catalog entry
 - requires a qualified name like `main:lighthouse`
 - unqualified names are intentionally not accepted here
+- cross-registry "show me every registry carrying this pack" behavior is not
+  part of this proposal
 
 Expected output:
 
@@ -374,6 +452,8 @@ Releases:
 
 - there is no `default` registry
 - first-party registry name is `main`
+- `main` is simply the conventional name seeded at installation time; no CLI
+  behavior depends on its continued presence
 - unqualified names only resolve when exactly one registry matches in contexts
   that allow unqualified resolution
 - collisions require qualified names like `acme:lighthouse`
@@ -398,11 +478,11 @@ schema = 1
 
 [[registry]]
 name = "main"
-source = "https://github.com/gastownhall/gascity-packs"
+source = "https://registries.gascity.example/main/registry.toml"
 
 [[registry]]
 name = "acme"
-source = "https://github.com/acme/gascity-packs"
+source = "https://registries.acme.example/catalog/registry.toml"
 ```
 
 ### `registry.toml`
@@ -411,7 +491,12 @@ This is the published registry catalog file.
 
 - each `[[pack]]` entry has a required `description`
 - each `[[pack.release]]` entry has a required `description`
-- `pack.toml` does not need a required description field for this proposal
+- `source` identifies the canonical fetch origin for the pack
+- `commit` records the source revision identifier for the release; for
+  git-backed sources this is naturally a git SHA, while other source kinds may
+  need a more general rule in a later revision of the format
+- `hash` is the integrity check for the fetched release payload or canonical
+  unpacked contents
 
 Example:
 
@@ -430,6 +515,10 @@ source = "https://packages.example/main/lighthouse"
   description = "Adds dock patrol checks and improves incident triage."
 ```
 
+### `pack.toml`
+
+- `pack.toml` does not need a required description field for this proposal
+
 
 ## Cache
 
@@ -443,7 +532,7 @@ The storage model is intentionally light:
 
 Working rules:
 
-- keep a machine-global cache under `~/.gc`
+- keep a machine-local, per-user cache under `~/.gc`
 - do not introduce a first-class machine-wide store
 - do not assume `.gc` should be kept wholesale in source control
 - treat `fetch` as cache-oriented, not as full materialization
@@ -466,3 +555,15 @@ primarily trying to settle command names, signatures, and output shapes.
    deployable unit. Our import mechanism supports the scenario by embedding
    pack content under `assets/` and using path references in the `import`
    directive in `pack.toml`. But we don't provide CLI surface area to manage it.
+3. Registry catalog caching and offline behavior are not fully specified yet:
+   when registry lookups fail, the proposal does not yet say whether the CLI
+   uses a cached `registry.toml`, fails hard, or does something in between.
+4. Cache pruning is not specified. `remove` intentionally does not imply eager
+   cache deletion, but this proposal does not yet define a `clean`/`prune`
+   command or an automatic reclamation policy.
+5. Nested pack edge cases are not fully specified. In particular, if a pack is
+   nested under another pack through an `assets/`-style workflow, the expected
+   ambient behavior is likely "innermost wins," but this should be frozen
+   explicitly in a later revision.
+6. Authentication for registries and source fetches is out of scope for this
+   proposal.
